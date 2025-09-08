@@ -1,0 +1,324 @@
+[
+    {
+        "label": "Flask",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "request",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "jsonify",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "send_from_directory",
+        "importPath": "flask",
+        "description": "flask",
+        "isExtraImport": true,
+        "detail": "flask",
+        "documentation": {}
+    },
+    {
+        "label": "SocketIO",
+        "importPath": "flask_socketio",
+        "description": "flask_socketio",
+        "isExtraImport": true,
+        "detail": "flask_socketio",
+        "documentation": {}
+    },
+    {
+        "label": "emit",
+        "importPath": "flask_socketio",
+        "description": "flask_socketio",
+        "isExtraImport": true,
+        "detail": "flask_socketio",
+        "documentation": {}
+    },
+    {
+        "label": "join_room",
+        "importPath": "flask_socketio",
+        "description": "flask_socketio",
+        "isExtraImport": true,
+        "detail": "flask_socketio",
+        "documentation": {}
+    },
+    {
+        "label": "CORS",
+        "importPath": "flask_cors",
+        "description": "flask_cors",
+        "isExtraImport": true,
+        "detail": "flask_cors",
+        "documentation": {}
+    },
+    {
+        "label": "MongoClient",
+        "importPath": "pymongo",
+        "description": "pymongo",
+        "isExtraImport": true,
+        "detail": "pymongo",
+        "documentation": {}
+    },
+    {
+        "label": "ObjectId",
+        "importPath": "bson.objectid",
+        "description": "bson.objectid",
+        "isExtraImport": true,
+        "detail": "bson.objectid",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "datetime",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "datetime",
+        "description": "datetime",
+        "detail": "datetime",
+        "documentation": {}
+    },
+    {
+        "label": "load_dotenv",
+        "importPath": "dotenv",
+        "description": "dotenv",
+        "isExtraImport": true,
+        "detail": "dotenv",
+        "documentation": {}
+    },
+    {
+        "label": "serialize_doc",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def serialize_doc(doc):\n    if not doc:\n        return None\n    out = {}\n    for k, v in doc.items():\n        if isinstance(v, ObjectId):\n            out[k] = str(v)\n        elif isinstance(v, datetime.datetime):\n            out[k] = v.isoformat()\n        elif isinstance(v, list):",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "serialize_list",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def serialize_list(docs):\n    return [serialize_doc(d) for d in docs]\n# ---------- State ----------\nstate = {'round': 0, 'current_q_index': 0, 'round_questions': []}\n# ---------- Admin ----------\n@app.route('/api/admin/questions', methods=['GET','POST'])\ndef admin_questions():\n    if request.method == 'GET':\n        qs = list(db.questions.find({}))\n        return jsonify(serialize_list(qs))",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "admin_questions",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def admin_questions():\n    if request.method == 'GET':\n        qs = list(db.questions.find({}))\n        return jsonify(serialize_list(qs))\n    data = request.json or {}\n    q = {\n        'text': data.get('text'),\n        'options': data.get('options', []),\n        'answerIndex': data.get('answerIndex'),\n        'answerText': data.get('answerText', ''),",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "upload_image",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def upload_image():\n    f = request.files.get('file')\n    if not f:\n        return jsonify({'error': 'no file'}), 400\n    safe_name = f\"{int(datetime.datetime.utcnow().timestamp())}_{f.filename}\"\n    path = os.path.join(UPLOAD_DIR, safe_name)\n    f.save(path)\n    return jsonify({'filename': safe_name})\n@app.route('/uploads/<path:filename>')\ndef uploaded_file(filename):",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "uploaded_file",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def uploaded_file(filename):\n    return send_from_directory(UPLOAD_DIR, filename)\n# ---------- Player ----------\n@app.route('/api/player/register', methods=['POST'])\ndef register_player():\n    data = request.json\n    name = data.get('name')\n    if not name:\n        return jsonify({'error': 'Name is required'}), 400\n    existing = db.players.find_one({'name': name})",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "register_player",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def register_player():\n    data = request.json\n    name = data.get('name')\n    if not name:\n        return jsonify({'error': 'Name is required'}), 400\n    existing = db.players.find_one({'name': name})\n    if existing:\n        return jsonify({'error': 'Name already taken'}), 400\n    player = {\n        'name': name,",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "player_bet",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def player_bet():\n    data = request.json or {}\n    playerId = data.get('playerId')\n    bet = int(data.get('bet', 0))\n    if not playerId:\n        return jsonify({'error': 'playerId required'}), 400\n    if not is_player_eligible(playerId):\n        return jsonify({'error': 'Not eligible for this round'}), 403\n    p = db.players.find_one({'_id': ObjectId(playerId)})\n    if not p:",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "player_answer",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def player_answer():\n    data = request.json or {}\n    playerId = data.get('playerId')\n    questionId = data.get('questionId')\n    answerIndex = data.get('answerIndex')\n    answerText = (data.get('answerText') or '').strip()\n    if not playerId or not questionId:\n        return jsonify({'error': 'playerId and questionId required'}), 400\n    if not is_player_eligible(playerId):\n        return jsonify({'error': 'Not eligible for this round'}), 403",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "is_player_eligible",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def is_player_eligible(playerId):\n    r = state['round']\n    if r == 1:\n        return True\n    prev_round = r - 1\n    return db.shortlist.find_one({'round': prev_round, 'playerId': playerId}) is not None\n@app.route('/api/admin/start_round', methods=['POST'])\ndef start_round():\n    r = int((request.json or {}).get('round', 1))\n    state['round'] = r",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "start_round",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def start_round():\n    r = int((request.json or {}).get('round', 1))\n    state['round'] = r\n    qs = list(db.questions.find({'round': r}))\n    state['round_questions'] = qs\n    state['current_q_index'] = 0\n    if r == 1:\n        waiting = list(db.waiting.find({}))\n        for w in waiting:\n            db.players.update_one({'_id': ObjectId(w['playerId'])}, {'$set': {'points': 500}})",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "next_question",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def next_question():\n    idx = state['current_q_index']\n    if idx >= len(state['round_questions']):\n        return jsonify({'ok': False, 'msg': 'no more questions'})\n    q = state['round_questions'][idx]\n    state['current_q_index'] += 1\n    q_payload = {\n        '_id': str(q['_id']),\n        'text': q.get('text'),\n        'options': q.get('options', []),",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "end_round",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def end_round():\n    players = list(db.players.find({}))\n    players_sorted = sorted(players, key=lambda p: p.get('points', 0), reverse=True)\n    players_serialized = serialize_list(players_sorted)\n    db.leaderboards.insert_one({\n        'round': state['round'],\n        'snapshot': players_serialized,\n        'ts': datetime.datetime.utcnow()\n    })\n    topn = max(1, len(players_serialized) // 2)",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "handle_join_waiting",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def handle_join_waiting(data):\n    pid = data.get('_id') or data.get('playerId')\n    name = data.get('name', '')\n    if not pid:\n        return\n    join_room(str(pid))\n    db.waiting.update_one({'playerId': pid}, {'$set': {'playerId': pid, 'name': name}}, upsert=True)\n    waiting = list(db.waiting.find({}))\n    out = []\n    for w in waiting:",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "handle_get_waiting",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def handle_get_waiting():\n    waiting = list(db.waiting.find({}))\n    out = []\n    for w in waiting:\n        p = db.players.find_one({'_id': ObjectId(w['playerId'])})\n        pts = p.get('points', 0) if p else 0\n        out.append({'_id': w['playerId'], 'name': w['name'], 'points': pts})\n    emit('waiting_list', out)\n@socketio.on('get_leaderboard')\ndef handle_get_lb():",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "handle_get_lb",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def handle_get_lb():\n    lb = list(db.leaderboards.find().sort([('_id', -1)]).limit(1))\n    emit('leaderboard', lb[0]['snapshot'] if lb else [])\n@socketio.on('get_player_state')\ndef handle_player_state(data):\n    if not data or '_id' not in data:\n        emit('player_state', {'error': 'missing player id'})\n        return\n    try:\n        p = db.players.find_one({'_id': ObjectId(data['_id'])})",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "handle_player_state",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def handle_player_state(data):\n    if not data or '_id' not in data:\n        emit('player_state', {'error': 'missing player id'})\n        return\n    try:\n        p = db.players.find_one({'_id': ObjectId(data['_id'])})\n        emit('player_state', serialize_doc(p) if p else {'error': 'not found'})\n    except Exception as e:\n        emit('player_state', {'error': str(e)})\n@app.route('/api/admin/clear_players', methods=['POST'])",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "clear_players",
+        "kind": 2,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "def clear_players():\n    collections_to_clear = ['players', 'answers', 'leaderboards', 'shortlist', 'waiting', 'round_bets']\n    for col in collections_to_clear:\n        db[col].delete_many({})\n    return jsonify({'ok': True, 'msg': 'All player-related data cleared'})\n# ---------- Run ----------\nif __name__ == '__main__':\n    socketio.run(app, host='0.0.0.0', port=5001, debug=True)",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "MONGO_URI",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "MONGO_URI = os.getenv(\"MONGO_URI\")\n# ---------- Database ----------\nclient = MongoClient(MONGO_URI)\ndb = client[\"quiz_game\"]\nprint(\"Connected to MongoDB ✅\")\nprint(\"Collections:\", db.list_collection_names())\napp = Flask(__name__, static_folder='static', static_url_path='/')\nCORS(app, supports_credentials=True, origins=[\"http://localhost:5173\"])\nsocketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')\nUPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "client",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "client = MongoClient(MONGO_URI)\ndb = client[\"quiz_game\"]\nprint(\"Connected to MongoDB ✅\")\nprint(\"Collections:\", db.list_collection_names())\napp = Flask(__name__, static_folder='static', static_url_path='/')\nCORS(app, supports_credentials=True, origins=[\"http://localhost:5173\"])\nsocketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')\nUPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')\nos.makedirs(UPLOAD_DIR, exist_ok=True)\n# ---------- Helpers ----------",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "db",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "db = client[\"quiz_game\"]\nprint(\"Connected to MongoDB ✅\")\nprint(\"Collections:\", db.list_collection_names())\napp = Flask(__name__, static_folder='static', static_url_path='/')\nCORS(app, supports_credentials=True, origins=[\"http://localhost:5173\"])\nsocketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')\nUPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')\nos.makedirs(UPLOAD_DIR, exist_ok=True)\n# ---------- Helpers ----------\ndef serialize_doc(doc):",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "app",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "app = Flask(__name__, static_folder='static', static_url_path='/')\nCORS(app, supports_credentials=True, origins=[\"http://localhost:5173\"])\nsocketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')\nUPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')\nos.makedirs(UPLOAD_DIR, exist_ok=True)\n# ---------- Helpers ----------\ndef serialize_doc(doc):\n    if not doc:\n        return None\n    out = {}",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "socketio",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')\nUPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')\nos.makedirs(UPLOAD_DIR, exist_ok=True)\n# ---------- Helpers ----------\ndef serialize_doc(doc):\n    if not doc:\n        return None\n    out = {}\n    for k, v in doc.items():\n        if isinstance(v, ObjectId):",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "UPLOAD_DIR",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "UPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')\nos.makedirs(UPLOAD_DIR, exist_ok=True)\n# ---------- Helpers ----------\ndef serialize_doc(doc):\n    if not doc:\n        return None\n    out = {}\n    for k, v in doc.items():\n        if isinstance(v, ObjectId):\n            out[k] = str(v)",
+        "detail": "backend.app",
+        "documentation": {}
+    },
+    {
+        "label": "state",
+        "kind": 5,
+        "importPath": "backend.app",
+        "description": "backend.app",
+        "peekOfCode": "state = {'round': 0, 'current_q_index': 0, 'round_questions': []}\n# ---------- Admin ----------\n@app.route('/api/admin/questions', methods=['GET','POST'])\ndef admin_questions():\n    if request.method == 'GET':\n        qs = list(db.questions.find({}))\n        return jsonify(serialize_list(qs))\n    data = request.json or {}\n    q = {\n        'text': data.get('text'),",
+        "detail": "backend.app",
+        "documentation": {}
+    }
+]
