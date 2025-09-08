@@ -22,8 +22,9 @@ print("Connected to MongoDB ✅")
 print("Collections:", db.list_collection_names())
 
 app = Flask(__name__, static_folder='static', static_url_path='/')
-CORS(app, supports_credentials=True, origins=["https://guyura-123790.web.app/"])
-socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins=["https://guyura-123790.web.app"], async_mode='threading')
+CORS(app, supports_credentials=True, origins=["https://guyura-123790.web.app"])
+
 
 
 UPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')
