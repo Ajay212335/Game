@@ -1,5 +1,8 @@
 Flask
 flask-socketio
 pymongo
+python-dotenv
 flask-cors
+gunicorn
 eventlet
+python-dotenv
