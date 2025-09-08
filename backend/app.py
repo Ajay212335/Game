@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
@@ -383,5 +386,5 @@ def clear_players():
     return jsonify({'ok': True, 'msg': 'All player-related data cleared'})
 
 # ---------- Run ----------
-if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5001, debug=True)
+if __name__ == "__main__":
+    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5001)), debug=True)
