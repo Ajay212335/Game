@@ -22,8 +22,22 @@ print("Connected to MongoDB ✅")
 print("Collections:", db.list_collection_names())
 
 app = Flask(__name__, static_folder='static', static_url_path='/')
-socketio = SocketIO(app, cors_allowed_origins=["https://guyura-123790.web.app"], async_mode='threading')
-CORS(app, supports_credentials=True, origins=["https://guyura-123790.web.app"])
+
+
+# Allow all methods from your frontend
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "https://guyura-123790.web.app"}},
+    supports_credentials=True,
+    methods=["GET", "POST", "OPTIONS"]
+)
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=["https://guyura-123790.web.app"],  # Only allow your frontend
+    async_mode="threading"
+)
+
 
 
 
