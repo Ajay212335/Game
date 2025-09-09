@@ -1,14 +1,11 @@
-import eventlet
-eventlet.monkey_patch()
-
-from flask import Flask, request, jsonify, send_from_directory
+import base64
+from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit, join_room
 from flask_cors import CORS
 from pymongo import MongoClient
 from bson.objectid import ObjectId
 import os
 import datetime
-
 from dotenv import load_dotenv
 
 # ---------- Load ENV ----------
@@ -23,8 +20,7 @@ print("Collections:", db.list_collection_names())
 
 app = Flask(__name__, static_folder='static', static_url_path='/')
 
-
-# Allow all methods from your frontend
+# Allow only your frontend
 CORS(
     app,
     resources={r"/api/*": {"origins": "https://guyura-123790.web.app"}},
@@ -34,15 +30,9 @@ CORS(
 
 socketio = SocketIO(
     app,
-    cors_allowed_origins=["https://guyura-123790.web.app"],  # Only allow your frontend
+    cors_allowed_origins=["https://guyura-123790.web.app"],
     async_mode="threading"
 )
-
-
-
-
-UPLOAD_DIR = os.path.join(os.getcwd(), 'backend', 'uploads')
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ---------- Helpers ----------
 def serialize_doc(doc):
@@ -83,7 +73,7 @@ def admin_questions():
         'answerText': data.get('answerText', ''),
         'round': data.get('round', 1),
         'time': data.get('time', 15),
-        'images': data.get('images', []),
+        'images': data.get('images', []),   # list of base64 strings
         'code': data.get('code', '')
     }
     res = db.questions.insert_one(q)
@@ -95,14 +85,25 @@ def upload_image():
     f = request.files.get('file')
     if not f:
         return jsonify({'error': 'no file'}), 400
-    safe_name = f"{int(datetime.datetime.utcnow().timestamp())}_{f.filename}"
-    path = os.path.join(UPLOAD_DIR, safe_name)
-    f.save(path)
-    return jsonify({'filename': safe_name})
+    
+    # convert to base64
+    file_bytes = f.read()
+    encoded = base64.b64encode(file_bytes).decode('utf-8')
 
-@app.route('/uploads/<path:filename>')
-def uploaded_file(filename):
-    return send_from_directory(UPLOAD_DIR, filename)
+    # optional: store in its own collection
+    img_doc = {
+        'filename': f.filename,
+        'contentType': f.mimetype,
+        'data': encoded,
+        'createdAt': datetime.datetime.utcnow()
+    }
+    res = db.images.insert_one(img_doc)
+
+    return jsonify({
+        'imageId': str(res.inserted_id),
+        'data': encoded,
+        'contentType': f.mimetype
+    })
 
 # ---------- Player ----------
 @app.route('/api/player/register', methods=['POST'])
@@ -127,12 +128,7 @@ def register_player():
     player['_id'] = str(result.inserted_id)
     return jsonify(player), 200
 
-
-
-# --- Store Round 3 codes in DB ---
-# Example structure in round3_codes collection:
-# { "playerId": "abc123", "code": "15367", "used": False }
-
+# --- Store Round 3 codes ---
 @app.route('/api/player/enter_code', methods=['POST'])
 def player_enter_code():
     data = request.json or {}
@@ -146,11 +142,8 @@ def player_enter_code():
     if not rec:
         return jsonify({'error': 'Invalid code'}), 403
 
-    # mark as used (optional, so each player can only enter once)
     db.round3_codes.update_one({'_id': rec['_id']}, {'$set': {'used': True}})
-
     return jsonify({'ok': True})
-
 
 @app.route('/api/player/bet', methods=['POST'])
 def player_bet():
@@ -201,10 +194,9 @@ def player_answer():
     if not is_player_eligible(playerId):
         return jsonify({'error': 'Not eligible for this round'}), 403
 
-    # Prevent duplicate answer submissions for the same question by same player
     existing_answer = db.answers.find_one({'playerId': playerId, 'questionId': questionId})
     if existing_answer:
-        return jsonify({'error': 'answer already submitted for this question by player'}), 400
+        return jsonify({'error': 'answer already submitted'}), 400
 
     q = db.questions.find_one({'_id': ObjectId(questionId)})
     if not q:
@@ -212,19 +204,14 @@ def player_answer():
 
     bet_doc = db.round_bets.find_one({'round': state['round'], 'playerId': playerId})
     if not bet_doc:
-        return jsonify({'error': 'no bet found for this round'}), 400
+        return jsonify({'error': 'no bet found'}), 400
 
     total_questions = len(state['round_questions']) if state['round_questions'] else 1
     per_q = bet_doc['bet'] // total_questions if total_questions > 0 else 0
 
-    reward = 0
-    correct = False
-    bonus = 0
-    rank = None  # position among correct answerers
+    reward, correct, bonus, rank = 0, False, 0, None
 
-    # Determine correctness
     if q['round'] == 1:
-        # For round 1 use option index compare (ensure type alignment)
         try:
             submitted_index = int(answerIndex) if answerIndex is not None else None
         except Exception:
@@ -236,29 +223,16 @@ def player_answer():
             correct = True
 
     if correct:
-        # Base reward:
         reward = per_q * 2
-
-        # Order-based bonus:
-        #total active players - counts all players in collection
         total_players = db.players.count_documents({})
-
-        # how many correct answers already recorded for this question
         already_correct_count = db.answers.count_documents({'questionId': questionId, 'correct': True})
-        # current player's correct position (1-based)
         rank = already_correct_count + 1
-
-        # bonus formula: (total_players - rank + 1) * 2
         bonus = max((total_players - rank + 1), 0) * 2
-
-        # add bonus to reward
         reward += bonus
 
-    # update player's points
     if reward:
         db.players.update_one({'_id': ObjectId(playerId)}, {'$inc': {'points': reward}})
 
-    # store answer record including bonus and rank
     db.answers.insert_one({
         'playerId': playerId,
         'questionId': questionId,
@@ -271,11 +245,9 @@ def player_answer():
         'ts': datetime.datetime.utcnow()
     })
 
-    # fetch updated player for response
     p = db.players.find_one({'_id': ObjectId(playerId)})
     p_serial = serialize_doc(p)
 
-    # Emit points update and answer result to frontend (only to player)
     socketio.emit('points_update', p_serial)
     socketio.emit('answer_result', {
         'playerId': playerId,
