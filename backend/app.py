@@ -1,3 +1,7 @@
+import eventlet
+eventlet.monkey_patch()   # MUST come before any other imports
+
+
 import base64
 from flask import Flask, request, jsonify
 from flask_socketio import SocketIO, emit, join_room
