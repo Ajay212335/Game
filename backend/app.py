@@ -557,29 +557,33 @@ def next_question():
         return jsonify({'ok': True, 'sent': sent})
 
     else:
-        # For rounds >1 (non-3), send same q to shortlisted players (existing behavior)
-        shortlisted = list(db.shortlist.find({'round': state['round']-1}))
-        sent = 0
-        for s in shortlisted:
-            pid = s['playerId']
-            if state['current_q_index'] >= len(state['round_questions']):
-                continue
-            q = state['round_questions'][state['current_q_index']]
-            q_payload = {
-                '_id': str(q['_id']),
-                'text': q.get('text'),
-                'options': q.get('options', []),
-                'answerIndex': q.get('answerIndex'),
-                'answerText': q.get('answerText', ''),
-                'images': q.get('images', []),
-                'code': q.get('code', ''),
-                'time': q.get('time', 15)
-            }
-            socketio.emit('round_question', q_payload, room=str(pid))
-            sent += 1
+    # For round 2 (or any non-1, non-3 rounds), also shuffle per player
+    shortlisted = list(db.shortlist.find({'round': state['round']-1}))
+    sent = 0
+    for s in shortlisted:
+        pid = s['playerId']
+        create_player_round_order(pid, state['round'])  # ensure shuffle exists
+        q = pop_next_question_for_player(pid, state['round'])
+        if not q:
+            socketio.emit('round_question', {'done': True}, room=str(pid))
+            continue
 
-        state['current_q_index'] += 1
-        return jsonify({'ok': True, 'sent': sent})
+        q_payload = {
+            '_id': str(q['_id']),
+            'text': q.get('text'),
+            'options': q.get('options', []),
+            'answerIndex': q.get('answerIndex'),
+            'answerText': q.get('answerText', ''),
+            'images': q.get('images', []),
+            'code': q.get('code', ''),
+            'time': q.get('time', 15)
+        }
+        socketio.emit('round_question', q_payload, room=str(pid))
+        sent += 1
+
+    state['current_q_index'] += 1  # still increment admin progression
+    return jsonify({'ok': True, 'sent': sent})
+
 
 @app.route('/api/admin/end_round', methods=['POST'])
 def end_round():
