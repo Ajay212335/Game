@@ -182,24 +182,37 @@ def player_enter_code():
     data = request.json or {}
     playerId = data.get('playerId')
     code = str(data.get('code', '')).strip()
-    
-    
-    if not playerId or not code:
-        return jsonify({'error': 'playerId and code required'}), 400
 
-    rec = db.round3_codes.find_one({'playerId': playerId, 'code': code, 'used': False})
-    if not rec:
-        return jsonify({'error': 'Invalid or already used code'}), 403
-    
-    db.round3_codes.update_one({'_id': rec['_id']}, {'$set': {'used': True}})
-    return jsonify({'ok': True})
+    if not playerId or not code or len(code) != 5 or not code.isdigit():
+        return jsonify({'error': 'Invalid code, must be 5 digits'}), 400
 
+    # Fetch all round 3 questions
+    questions = list(db.questions.find({'round': 3}))
+    if not questions:
+        return jsonify({'error': 'No round 3 questions available'}), 400
 
-def require_round3_code(playerId):
-    if state['round'] == 3:
-        rec = db.round3_codes.find_one({'playerId': playerId, 'used': True})
-        return rec is not None
-    return True
+    selected_q_ids = []
+    for digit in code:
+        idx = int(digit)  # digit 0..9
+        q_index = idx + 1  # 1→2nd, 5→6th, etc
+        if q_index < len(questions):
+            selected_q_ids.append(str(questions[q_index]['_id']))
+
+    if len(selected_q_ids) == 0:
+        return jsonify({'error': 'Code did not map to valid questions'}), 400
+
+    # Store in round3_codes
+    rec = {
+        'playerId': playerId,
+        'code': code,
+        'selectedQuestions': selected_q_ids,
+        'used': False,
+        'createdAt': datetime.datetime.utcnow()
+    }
+    db.round3_codes.update_one({'playerId': playerId}, {'$set': rec}, upsert=True)
+
+    return jsonify({'ok': True, 'selectedQuestions': selected_q_ids})
+
 
 @app.route('/api/player/bet', methods=['POST'])
 def player_bet():
