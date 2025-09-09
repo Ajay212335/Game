@@ -182,16 +182,24 @@ def player_enter_code():
     data = request.json or {}
     playerId = data.get('playerId')
     code = str(data.get('code', '')).strip()
-
+    
+    
     if not playerId or not code:
         return jsonify({'error': 'playerId and code required'}), 400
 
-    rec = db.round3_codes.find_one({'playerId': playerId, 'code': code})
+    rec = db.round3_codes.find_one({'playerId': playerId, 'code': code, 'used': False})
     if not rec:
-        return jsonify({'error': 'Invalid code'}), 403
-
+        return jsonify({'error': 'Invalid or already used code'}), 403
+    
     db.round3_codes.update_one({'_id': rec['_id']}, {'$set': {'used': True}})
     return jsonify({'ok': True})
+
+
+def require_round3_code(playerId):
+    if state['round'] == 3:
+        rec = db.round3_codes.find_one({'playerId': playerId, 'used': True})
+        return rec is not None
+    return True
 
 @app.route('/api/player/bet', methods=['POST'])
 def player_bet():
