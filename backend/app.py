@@ -179,6 +179,11 @@ def register_player():
 # --- Store Round 3 codes ---
 @app.route('/api/player/enter_code', methods=['POST'])
 def player_enter_code():
+    """
+    Player submits a 5-digit code (digits 0-9). Each digit maps to a question index
+    using the rule digit -> index+1 (so digit 1 -> 2nd question, 5 -> 6th, etc).
+    Store selected question IDs and currentIndex for the player in round3_codes.
+    """
     data = request.json or {}
     playerId = data.get('playerId')
     code = str(data.get('code', '')).strip()
@@ -186,33 +191,45 @@ def player_enter_code():
     if not playerId or not code or len(code) != 5 or not code.isdigit():
         return jsonify({'error': 'Invalid code, must be 5 digits'}), 400
 
-    # Fetch all round 3 questions
-    questions = list(db.questions.find({'round': 3}))
+    # Fetch all round 3 questions ordered consistently (use insertion order or _id sort)
+    # To be deterministic, sort by _id string
+    questions = list(db.questions.find({'round': 3}).sort('_id', 1))
     if not questions:
         return jsonify({'error': 'No round 3 questions available'}), 400
 
+    if len(questions) < 10:
+        # optional: you required 10 questions for mapping; warn if fewer
+        # still proceed but mapping may refer to out-of-range indices.
+        pass
+
     selected_q_ids = []
+    # mapping: digit d -> question index d + 1 (0-based -> +1)
     for digit in code:
-        idx = int(digit)  # digit 0..9
-        q_index = idx + 1  # 1→2nd, 5→6th, etc
-        if q_index < len(questions):
+        idx = int(digit)  # 0..9
+        q_index = idx + 1  # as per your mapping request
+        # ensure index is within bounds (0-based list length)
+        if 0 <= q_index < len(questions):
             selected_q_ids.append(str(questions[q_index]['_id']))
+        else:
+            # If out of bounds, skip that digit (alternative behaviour: wrap or map)
+            # We'll skip invalid mapping so selected_q_ids may be <5
+            continue
 
     if len(selected_q_ids) == 0:
         return jsonify({'error': 'Code did not map to valid questions'}), 400
 
-    # Store in round3_codes
+    # Store in round3_codes (with currentIndex)
     rec = {
         'playerId': playerId,
         'code': code,
         'selectedQuestions': selected_q_ids,
+        'currentIndex': 0,
         'used': False,
         'createdAt': datetime.datetime.utcnow()
     }
     db.round3_codes.update_one({'playerId': playerId}, {'$set': rec}, upsert=True)
 
     return jsonify({'ok': True, 'selectedQuestions': selected_q_ids})
-
 
 @app.route('/api/player/bet', methods=['POST'])
 def player_bet():
@@ -233,6 +250,12 @@ def player_bet():
     if bet > p.get('points', 0):
         return jsonify({'error': 'insufficient points'}), 400
 
+    # If round 3, require that player entered a code
+    if state['round'] == 3:
+        code_doc = db.round3_codes.find_one({'playerId': playerId})
+        if not code_doc:
+            return jsonify({'error': 'Must enter round-3 code before betting'}, 400)
+
     # prevent double bet for the *same* round
     if db.round_bets.find_one({'round': state['round'], 'playerId': playerId}):
         return jsonify({'error': 'bet already placed'}), 400
@@ -246,8 +269,8 @@ def player_bet():
         'ts': datetime.datetime.utcnow()
     })
 
-    # Create a shuffled order for this player AFTER bet (as requested)
-    if state['round'] and state['round'] > 0:
+    # Create a shuffled order for this player AFTER bet (as requested) - but only for non-3 rounds
+    if state['round'] and state['round'] > 0 and state['round'] != 3:
         create_player_round_order(playerId, state['round'])
 
     p = db.players.find_one({'_id': ObjectId(playerId)})
@@ -260,14 +283,50 @@ def api_player_next_question():
     """
     Optional pull endpoint: frontend may call this to ask for next question for this player.
     Returns question or {'done': True}
+    Supports round 3 via round3_codes mapping.
     """
     data = request.json or {}
     playerId = data.get('playerId')
-    round_no = data.get('round', state['round'])
+    round_no = int(data.get('round', state['round']))
 
     if not playerId:
         return jsonify({'error': 'playerId required'}), 400
 
+    # Special handling for round 3: use round3_codes mapping
+    if round_no == 3:
+        code_doc = db.round3_codes.find_one({'playerId': playerId})
+        if not code_doc:
+            return jsonify({'error': 'No code set for this player'}), 400
+
+        selected = code_doc.get('selectedQuestions', [])
+        idx = code_doc.get('currentIndex', 0)
+        if idx >= len(selected):
+            return jsonify({'done': True, 'message': 'All code-selected questions completed'})
+
+        qid = selected[idx]
+        q = db.questions.find_one({'_id': ObjectId(qid)})
+        if not q:
+            # increment index to avoid infinite loop for missing question
+            db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
+            return jsonify({'error': 'Question not found for selected id'}), 404
+
+        # increment index
+        db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
+
+        q_payload = {
+            '_id': str(q['_id']),
+            'text': q.get('text', ''),
+            'options': q.get('options', []),
+            'answerIndex': q.get('answerIndex'),
+            'answerText': q.get('answerText', ''),
+            'images': q.get('images', []),
+            'code': q.get('code', ''),
+            'time': q.get('time', 15),
+            'round': q.get('round', 3)
+        }
+        return jsonify({'question': q_payload})
+
+    # default behaviour for other rounds (uses player_rounds)
     pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
     if not pr:
         # if no pr yet, create if possible
@@ -403,8 +462,8 @@ def start_round():
 @app.route('/api/admin/next_question', methods=['POST'])
 def next_question():
     """
-    When admin triggers next_question, we will emit the next shuffled question to each player
-    who placed a bet in the current round. This gives each player their own sequence.
+    When admin triggers next_question, we will emit the next question.
+    For round 3 we send per-player the next question from their round3_codes.selectedQuestions.
     """
     idx = state['current_q_index']
     # check if any round questions left globally (for bookkeeping)
@@ -442,14 +501,59 @@ def next_question():
         state['current_q_index'] += 1
         return jsonify({'ok': True, 'sent': sent})
 
+    # For Round 3: send each player their own next question chosen by their code
+    if state['round'] == 3:
+        bets = list(db.round_bets.find({'round': state['round']}))
+        sent = 0
+        for bet in bets:
+            pid = bet['playerId']
+            code_doc = db.round3_codes.find_one({'playerId': pid})
+            if not code_doc:
+                # player didn't enter code — skip or emit not-eligible
+                socketio.emit('round_question', {'error': 'no_code_entered'}, room=str(pid))
+                continue
+
+            selected = code_doc.get('selectedQuestions', [])
+            cur_idx = code_doc.get('currentIndex', 0)
+
+            if cur_idx >= len(selected):
+                socketio.emit('round_question', {'done': True}, room=str(pid))
+                continue
+
+            qid = selected[cur_idx]
+            q = db.questions.find_one({'_id': ObjectId(qid)})
+            if not q:
+                # skip missing question but increment index to avoid loop
+                db.round3_codes.update_one({'playerId': pid}, {'$inc': {'currentIndex': 1}})
+                socketio.emit('round_question', {'error': 'question_not_found'}, room=str(pid))
+                continue
+
+            q_payload = {
+                '_id': str(q['_id']),
+                'text': q.get('text'),
+                'options': q.get('options', []),
+                'answerIndex': q.get('answerIndex'),
+                'answerText': q.get('answerText', ''),
+                'images': q.get('images', []),
+                'code': q.get('code', ''),
+                'time': q.get('time', 15)
+            }
+            # send that player's question
+            socketio.emit('round_question', q_payload, room=str(pid))
+            # increment that player's pointer
+            db.round3_codes.update_one({'playerId': pid}, {'$inc': {'currentIndex': 1}})
+            sent += 1
+
+        # increment global index for admin bookkeeping (optional)
+        state['current_q_index'] += 1
+        return jsonify({'ok': True, 'sent': sent})
+
     else:
-        # For rounds >1, send to shortlisted players (existing behavior)
+        # For rounds >1 (non-3), send same q to shortlisted players (existing behavior)
         shortlisted = list(db.shortlist.find({'round': state['round']-1}))
         sent = 0
         for s in shortlisted:
             pid = s['playerId']
-            # for later rounds we can still support per-player orders similarly if needed
-            # here we will just send the same q to all shortlisted players (old behavior)
             if state['current_q_index'] >= len(state['round_questions']):
                 continue
             q = state['round_questions'][state['current_q_index']]
@@ -544,7 +648,7 @@ def handle_player_state(data):
 
 @app.route('/api/admin/clear_players', methods=['POST'])
 def clear_players():
-    collections_to_clear = ['players', 'answers', 'leaderboards', 'shortlist', 'waiting', 'round_bets', 'player_rounds']
+    collections_to_clear = ['players', 'answers', 'leaderboards', 'shortlist', 'waiting', 'round_bets', 'player_rounds', 'round3_codes']
     for col in collections_to_clear:
         db[col].delete_many({})
     return jsonify({'ok': True, 'msg': 'All player-related data cleared'})
