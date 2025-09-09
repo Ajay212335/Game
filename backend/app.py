@@ -106,6 +106,14 @@ def pop_next_question_for_player(playerId, round_no):
 # ---------- State ----------
 state = {'round': 0, 'current_q_index': 0, 'round_questions': []}
 
+
+@app.route('/api/questions/round/<int:round_no>', methods=['GET'])
+def get_questions_by_round(round_no):
+    qs = list(db.questions.find({'round': round_no}))
+    if not qs:
+        return jsonify({'error': f'No questions found for round {round_no}'}), 404
+    return jsonify(serialize_list(qs))
+
 # ---------- Admin ----------
 @app.route('/api/admin/questions', methods=['GET','POST'])
 def admin_questions():
