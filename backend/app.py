@@ -127,6 +127,31 @@ def register_player():
     player['_id'] = str(result.inserted_id)
     return jsonify(player), 200
 
+
+
+# --- Store Round 3 codes in DB ---
+# Example structure in round3_codes collection:
+# { "playerId": "abc123", "code": "15367", "used": False }
+
+@app.route('/api/player/enter_code', methods=['POST'])
+def player_enter_code():
+    data = request.json or {}
+    playerId = data.get('playerId')
+    code = str(data.get('code', '')).strip()
+
+    if not playerId or not code:
+        return jsonify({'error': 'playerId and code required'}), 400
+
+    rec = db.round3_codes.find_one({'playerId': playerId, 'code': code})
+    if not rec:
+        return jsonify({'error': 'Invalid code'}), 403
+
+    # mark as used (optional, so each player can only enter once)
+    db.round3_codes.update_one({'_id': rec['_id']}, {'$set': {'used': True}})
+
+    return jsonify({'ok': True})
+
+
 @app.route('/api/player/bet', methods=['POST'])
 def player_bet():
     data = request.json or {}
