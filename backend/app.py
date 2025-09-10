@@ -25,7 +25,6 @@ print("Collections:", db.list_collection_names())
 
 app = Flask(__name__, static_folder='static', static_url_path='/')
 
-# Allow frontend - include localhost for dev convenience
 CORS(
     app,
     resources={r"/api/*": {"origins": ["https://guyura-123790.web.app", "http://localhost:5173", "http://localhost:3000"]}},
@@ -98,7 +97,6 @@ def pop_next_question_for_player(playerId, round_no):
         return None
 
     q_id = order[idx]
-    # increment index
     db.player_rounds.update_one({'playerId': playerId, 'round': round_no}, {'$inc': {'currentIndex': 1}})
     q = db.questions.find_one({'_id': ObjectId(q_id)})
     return q
@@ -121,7 +119,7 @@ def admin_questions():
         'answerText': data.get('answerText', ''),
         'round': data.get('round', 1),
         'time': data.get('time', 15),
-        'images': data.get('images', []),   # list of base64 strings
+        'images': data.get('images', []),
         'code': data.get('code', '')
     }
     res = db.questions.insert_one(q)
@@ -134,11 +132,9 @@ def upload_image():
     if not f:
         return jsonify({'error': 'no file'}), 400
     
-    # convert to base64
     file_bytes = f.read()
     encoded = base64.b64encode(file_bytes).decode('utf-8')
 
-    # optional: store in its own collection
     img_doc = {
         'filename': f.filename,
         'contentType': f.mimetype,
@@ -176,7 +172,6 @@ def register_player():
     player['_id'] = str(result.inserted_id)
     return jsonify(player), 200
 
-# --- Store Round 3 codes ---
 @app.route('/api/player/enter_code', methods=['POST'])
 def player_enter_code():
     data = request.json or {}
@@ -212,11 +207,9 @@ def player_bet():
     if bet > p.get('points', 0):
         return jsonify({'error': 'insufficient points'}), 400
 
-    # prevent double bet for the *same* round
     if db.round_bets.find_one({'round': state['round'], 'playerId': playerId}):
         return jsonify({'error': 'bet already placed'}), 400
 
-    # deduct immediately
     db.players.update_one({'_id': ObjectId(playerId)}, {'$inc': {'points': -bet}})
     db.round_bets.insert_one({
         'round': state['round'],
@@ -225,9 +218,7 @@ def player_bet():
         'ts': datetime.datetime.utcnow()
     })
 
-    # Create a shuffled order for this player AFTER bet (as requested)
-    if state['round'] and state['round'] > 0:
-        create_player_round_order(playerId, state['round'])
+    create_player_round_order(playerId, state['round'])
 
     p = db.players.find_one({'_id': ObjectId(playerId)})
     p_serial = serialize_doc(p)
@@ -236,10 +227,6 @@ def player_bet():
 
 @app.route('/api/player/next_question', methods=['POST'])
 def api_player_next_question():
-    """
-    Optional pull endpoint: frontend may call this to ask for next question for this player.
-    Returns question or {'done': True}
-    """
     data = request.json or {}
     playerId = data.get('playerId')
     round_no = data.get('round', state['round'])
@@ -249,7 +236,6 @@ def api_player_next_question():
 
     pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
     if not pr:
-        # if no pr yet, create if possible
         pr = create_player_round_order(playerId, round_no)
 
     q = pop_next_question_for_player(playerId, round_no)
@@ -294,16 +280,13 @@ def player_answer():
     if not bet_doc:
         return jsonify({'error': 'no bet found'}), 400
 
-    total_questions = len(state['round_questions']) if state['round_questions'] else 1
+    total_questions = len(db.questions.find({'round': state['round']}))
     per_q = bet_doc['bet'] // total_questions if total_questions > 0 else 0
 
     reward, correct, bonus, rank = 0, False, 0, None
 
     if q.get('round', 1) == 1:
-        try:
-            submitted_index = int(answerIndex) if answerIndex is not None else None
-        except Exception:
-            submitted_index = None
+        submitted_index = int(answerIndex) if answerIndex is not None else None
         if submitted_index is not None and submitted_index == q.get('answerIndex'):
             correct = True
     else:
@@ -336,7 +319,6 @@ def player_answer():
     p = db.players.find_one({'_id': ObjectId(playerId)})
     p_serial = serialize_doc(p)
 
-    # notify this player of result
     socketio.emit('points_update', p_serial)
     socketio.emit('answer_result', {
         'playerId': playerId,
@@ -382,71 +364,38 @@ def start_round():
 @app.route('/api/admin/next_question', methods=['POST'])
 def next_question():
     """
-    When admin triggers next_question, we will emit the next shuffled question to each player
-    who placed a bet in the current round. This gives each player their own sequence.
+    Emit next question to each player who placed bet, per-player shuffled order.
+    Works for all non-Round3 rounds.
     """
     idx = state['current_q_index']
-    # check if any round questions left globally (for bookkeeping)
     if idx >= len(state['round_questions']):
         return jsonify({'ok': False, 'msg': 'no more questions'})
 
-    # For Round 1: send per-player next question to players who placed bets
-    if state['round'] == 1:
-        bets = list(db.round_bets.find({'round': state['round']}))
-        sent = 0
-        for bet in bets:
-            pid = bet['playerId']
-            # ensure player has a shuffled order (created at bet time; but ensure again)
-            create_player_round_order(pid, state['round'])
-            q = pop_next_question_for_player(pid, state['round'])
-            if not q:
-                # player finished all questions
-                socketio.emit('round_question', {'done': True}, room=str(pid))
-                continue
+    bets = list(db.round_bets.find({'round': state['round']}))
+    sent = 0
+    for bet in bets:
+        pid = bet['playerId']
+        create_player_round_order(pid, state['round'])
+        q = pop_next_question_for_player(pid, state['round'])
+        if not q:
+            socketio.emit('round_question', {'done': True}, room=str(pid))
+            continue
 
-            q_payload = {
-                '_id': str(q['_id']),
-                'text': q.get('text'),
-                'options': q.get('options', []),
-                'answerIndex': q.get('answerIndex'),
-                'answerText': q.get('answerText', ''),
-                'images': q.get('images', []),
-                'code': q.get('code', ''),
-                'time': q.get('time', 15)
-            }
-            socketio.emit('round_question', q_payload, room=str(pid))
-            sent += 1
+        q_payload = {
+            '_id': str(q['_id']),
+            'text': q.get('text'),
+            'options': q.get('options', []),
+            'answerIndex': q.get('answerIndex'),
+            'answerText': q.get('answerText', ''),
+            'images': q.get('images', []),
+            'code': q.get('code', ''),
+            'time': q.get('time', 15)
+        }
+        socketio.emit('round_question', q_payload, room=str(pid))
+        sent += 1
 
-        # increment global index as well (keeps admin-side progression)
-        state['current_q_index'] += 1
-        return jsonify({'ok': True, 'sent': sent})
-
-    else:
-        # For rounds >1, send to shortlisted players (existing behavior)
-        shortlisted = list(db.shortlist.find({'round': state['round']-1}))
-        sent = 0
-        for s in shortlisted:
-            pid = s['playerId']
-            # for later rounds we can still support per-player orders similarly if needed
-            # here we will just send the same q to all shortlisted players (old behavior)
-            if state['current_q_index'] >= len(state['round_questions']):
-                continue
-            q = state['round_questions'][state['current_q_index']]
-            q_payload = {
-                '_id': str(q['_id']),
-                'text': q.get('text'),
-                'options': q.get('options', []),
-                'answerIndex': q.get('answerIndex'),
-                'answerText': q.get('answerText', ''),
-                'images': q.get('images', []),
-                'code': q.get('code', ''),
-                'time': q.get('time', 15)
-            }
-            socketio.emit('round_question', q_payload, room=str(pid))
-            sent += 1
-
-        state['current_q_index'] += 1
-        return jsonify({'ok': True, 'sent': sent})
+    state['current_q_index'] += 1
+    return jsonify({'ok': True, 'sent': sent})
 
 @app.route('/api/admin/end_round', methods=['POST'])
 def end_round():
@@ -472,7 +421,6 @@ def end_round():
     socketio.emit('leaderboard', players_serialized)
     socketio.emit('round_ended', {'round': state['round']})
 
-    # reset
     state['round'] = 0
     state['current_q_index'] = 0
     state['round_questions'] = []
