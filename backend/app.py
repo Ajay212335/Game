@@ -473,7 +473,7 @@ def api_player_next_question():
     """
     One unified endpoint for fetching the next question.
     Round 1 -> shuffled per player
-    Round 2 -> fixed order for all players (no shuffle)
+    Round 2 -> shuffled per player
     Round 3 -> code-based mapping
     """
     data = request.json or {}
@@ -504,18 +504,12 @@ def api_player_next_question():
         db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
         return jsonify({'question': serialize_doc(q)})
 
-    # ---------- ROUND 1 & 2 ----------
+    # ---------- ROUND 1 & 2 (shuffle per player) ----------
     pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
     if not pr:
-        if round_no == 1:
-            # Shuffle questions for this player
-            questions = list(db.questions.find({'round': 1}))
-            random.shuffle(questions)
-        elif round_no == 2:
-            # Fixed order, same for everyone
-            questions = list(db.questions.find({'round': 2}).sort('_id', 1))
-        else:
-            return jsonify({'error': 'Invalid round number'}), 400
+        # Fetch questions for this round
+        questions = list(db.questions.find({'round': round_no}))
+        random.shuffle(questions)  # shuffle here for each player
 
         question_ids = [str(q['_id']) for q in questions]
         pr = {
@@ -539,10 +533,11 @@ def api_player_next_question():
         db.player_rounds.update_one({'_id': pr['_id']}, {'$inc': {'currentIndex': 1}})
         return jsonify({'error': 'Question not found'}), 404
 
-    # Increment index for next time
+    # Increment for next fetch
     db.player_rounds.update_one({'_id': pr['_id']}, {'$inc': {'currentIndex': 1}})
 
     return jsonify({'question': serialize_doc(q)})
+
 
 
 
