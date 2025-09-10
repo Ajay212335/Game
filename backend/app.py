@@ -1,3 +1,4 @@
+
 import eventlet
 eventlet.monkey_patch()   # MUST come before any other imports
 
@@ -300,7 +301,7 @@ def api_player_next_question():
     if not playerId:
         return jsonify({'error': 'playerId required'}), 400
 
-    # ---------- ROUND 3 (code-selected questions) ----------
+    # Special handling for round 3: use round3_codes mapping
     if round_no == 3:
         code_doc = db.round3_codes.find_one({'playerId': playerId})
         if not code_doc:
@@ -314,6 +315,7 @@ def api_player_next_question():
         qid = selected[idx]
         q = db.questions.find_one({'_id': ObjectId(qid)})
         if not q:
+            # increment index to avoid infinite loop for missing question
             db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
             return jsonify({'error': 'Question not found for selected id'}), 404
 
@@ -333,36 +335,15 @@ def api_player_next_question():
         }
         return jsonify({'question': q_payload})
 
-    # ---------- ROUND 1 & 2 (shuffled per player) ----------
+    # default behaviour for other rounds (uses player_rounds)
     pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
     if not pr:
-        # explicitly shuffle for both round 1 and 2
-        questions = list(db.questions.find({'round': round_no}))
-        random.shuffle(questions)
+        # if no pr yet, create if possible
+        pr = create_player_round_order(playerId, round_no)
 
-        question_ids = [str(q['_id']) for q in questions]
-        pr = {
-            'playerId': playerId,
-            'round': round_no,
-            'order': question_ids,
-            'currentIndex': 0
-        }
-        db.player_rounds.insert_one(pr)
-
-    # fetch the player_round again (in case just created)
-    pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
-    idx = pr.get('currentIndex', 0)
-    order = pr.get('order', [])
-
-    if idx >= len(order):
-        return jsonify({'done': True, 'message': 'All questions completed'})
-
-    qid = order[idx]
-    q = db.questions.find_one({'_id': ObjectId(qid)})
-    db.player_rounds.update_one({'playerId': playerId, 'round': round_no}, {'$inc': {'currentIndex': 1}})
-
+    q = pop_next_question_for_player(playerId, round_no)
     if not q:
-        return jsonify({'error': 'Question not found'}), 404
+        return jsonify({'done': True, 'message': 'All questions completed'})
 
     q_payload = {
         '_id': str(q['_id']),
@@ -372,11 +353,9 @@ def api_player_next_question():
         'answerText': q.get('answerText', ''),
         'images': q.get('images', []),
         'code': q.get('code', ''),
-        'time': q.get('time', 15),
-        'round': q.get('round', round_no)
+        'time': q.get('time', 15)
     }
     return jsonify({'question': q_payload})
-
 
 @app.route('/api/player/answer', methods=['POST'])
 def player_answer():
@@ -489,97 +468,122 @@ def start_round():
 
     return jsonify({'ok': True})
 
-@app.route('/api/player/next_question', methods=['POST'])
-def api_player_next_question():
+@app.route('/api/admin/next_question', methods=['POST'])
+def next_question():
     """
-    Optional pull endpoint: frontend may call this to ask for next question for this player.
-    Returns question or {'done': True}
-    Supports round 3 via round3_codes mapping.
+    When admin triggers next_question, we will emit the next question.
+    For round 3 we send per-player the next question from their round3_codes.selectedQuestions.
     """
-    data = request.json or {}
-    playerId = data.get('playerId')
-    round_no = int(data.get('round', state['round']))
+    idx = state['current_q_index']
+    # check if any round questions left globally (for bookkeeping)
+    if idx >= len(state['round_questions']):
+        return jsonify({'ok': False, 'msg': 'no more questions'})
 
-    if not playerId:
-        return jsonify({'error': 'playerId required'}), 400
+    # For Round 1: send per-player next question to players who placed bets
+    if state['round'] == 1:
+        bets = list(db.round_bets.find({'round': state['round']}))
+        sent = 0
+        for bet in bets:
+            pid = bet['playerId']
+            # ensure player has a shuffled order (created at bet time; but ensure again)
+            create_player_round_order(pid, state['round'])
+            q = pop_next_question_for_player(pid, state['round'])
+            if not q:
+                # player finished all questions
+                socketio.emit('round_question', {'done': True}, room=str(pid))
+                continue
 
-    # ---------- ROUND 3 (code-selected questions) ----------
-    if round_no == 3:
-        code_doc = db.round3_codes.find_one({'playerId': playerId})
-        if not code_doc:
-            return jsonify({'error': 'No code set for this player'}), 400
+            q_payload = {
+                '_id': str(q['_id']),
+                'text': q.get('text'),
+                'options': q.get('options', []),
+                'answerIndex': q.get('answerIndex'),
+                'answerText': q.get('answerText', ''),
+                'images': q.get('images', []),
+                'code': q.get('code', ''),
+                'time': q.get('time', 15)
+            }
+            socketio.emit('round_question', q_payload, room=str(pid))
+            sent += 1
 
-        selected = code_doc.get('selectedQuestions', [])
-        idx = code_doc.get('currentIndex', 0)
-        if idx >= len(selected):
-            return jsonify({'done': True, 'message': 'All code-selected questions completed'})
+        # increment global index as well (keeps admin-side progression)
+        state['current_q_index'] += 1
+        return jsonify({'ok': True, 'sent': sent})
 
-        qid = selected[idx]
-        q = db.questions.find_one({'_id': ObjectId(qid)})
+    # For Round 3: send each player their own next question chosen by their code
+    if state['round'] == 3:
+        bets = list(db.round_bets.find({'round': state['round']}))
+        sent = 0
+        for bet in bets:
+            pid = bet['playerId']
+            code_doc = db.round3_codes.find_one({'playerId': pid})
+            if not code_doc:
+                # player didn't enter code — skip or emit not-eligible
+                socketio.emit('round_question', {'error': 'no_code_entered'}, room=str(pid))
+                continue
+
+            selected = code_doc.get('selectedQuestions', [])
+            cur_idx = code_doc.get('currentIndex', 0)
+
+            if cur_idx >= len(selected):
+                socketio.emit('round_question', {'done': True}, room=str(pid))
+                continue
+
+            qid = selected[cur_idx]
+            q = db.questions.find_one({'_id': ObjectId(qid)})
+            if not q:
+                # skip missing question but increment index to avoid loop
+                db.round3_codes.update_one({'playerId': pid}, {'$inc': {'currentIndex': 1}})
+                socketio.emit('round_question', {'error': 'question_not_found'}, room=str(pid))
+                continue
+
+            q_payload = {
+                '_id': str(q['_id']),
+                'text': q.get('text'),
+                'options': q.get('options', []),
+                'answerIndex': q.get('answerIndex'),
+                'answerText': q.get('answerText', ''),
+                'images': q.get('images', []),
+                'code': q.get('code', ''),
+                'time': q.get('time', 15)
+            }
+            # send that player's question
+            socketio.emit('round_question', q_payload, room=str(pid))
+            # increment that player's pointer
+            db.round3_codes.update_one({'playerId': pid}, {'$inc': {'currentIndex': 1}})
+            sent += 1
+
+        # increment global index for admin bookkeeping (optional)
+        state['current_q_index'] += 1
+        return jsonify({'ok': True, 'sent': sent})
+
+    else:
+    # For round 2 (or any non-1, non-3 rounds), also shuffle per player
+    shortlisted = list(db.shortlist.find({'round': state['round']-1}))
+    sent = 0
+    for s in shortlisted:
+        pid = s['playerId']
+        create_player_round_order(pid, state['round'])  # ensure shuffle exists
+        q = pop_next_question_for_player(pid, state['round'])
         if not q:
-            db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
-            return jsonify({'error': 'Question not found for selected id'}), 404
-
-        # increment index
-        db.round3_codes.update_one({'playerId': playerId}, {'$inc': {'currentIndex': 1}})
+            socketio.emit('round_question', {'done': True}, room=str(pid))
+            continue
 
         q_payload = {
             '_id': str(q['_id']),
-            'text': q.get('text', ''),
+            'text': q.get('text'),
             'options': q.get('options', []),
             'answerIndex': q.get('answerIndex'),
             'answerText': q.get('answerText', ''),
             'images': q.get('images', []),
             'code': q.get('code', ''),
-            'time': q.get('time', 15),
-            'round': q.get('round', 3)
+            'time': q.get('time', 15)
         }
-        return jsonify({'question': q_payload})
+        socketio.emit('round_question', q_payload, room=str(pid))
+        sent += 1
 
-    # ---------- ROUND 1 & 2 (shuffled per player) ----------
-    pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
-    if not pr:
-        # explicitly shuffle for both round 1 and 2
-        questions = list(db.questions.find({'round': round_no}))
-        random.shuffle(questions)
-
-        question_ids = [str(q['_id']) for q in questions]
-        pr = {
-            'playerId': playerId,
-            'round': round_no,
-            'order': question_ids,
-            'currentIndex': 0
-        }
-        db.player_rounds.insert_one(pr)
-
-    # fetch the player_round again (in case just created)
-    pr = db.player_rounds.find_one({'playerId': playerId, 'round': round_no})
-    idx = pr.get('currentIndex', 0)
-    order = pr.get('order', [])
-
-    if idx >= len(order):
-        return jsonify({'done': True, 'message': 'All questions completed'})
-
-    qid = order[idx]
-    q = db.questions.find_one({'_id': ObjectId(qid)})
-    db.player_rounds.update_one({'playerId': playerId, 'round': round_no}, {'$inc': {'currentIndex': 1}})
-
-    if not q:
-        return jsonify({'error': 'Question not found'}), 404
-
-    q_payload = {
-        '_id': str(q['_id']),
-        'text': q.get('text'),
-        'options': q.get('options', []),
-        'answerIndex': q.get('answerIndex'),
-        'answerText': q.get('answerText', ''),
-        'images': q.get('images', []),
-        'code': q.get('code', ''),
-        'time': q.get('time', 15),
-        'round': q.get('round', round_no)
-    }
-    return jsonify({'question': q_payload})
-
+    state['current_q_index'] += 1  # still increment admin progression
+    return jsonify({'ok': True, 'sent': sent})
 
 
 @app.route('/api/admin/end_round', methods=['POST'])
