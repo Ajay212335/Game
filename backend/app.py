@@ -287,6 +287,7 @@ def player_bet():
     socketio.emit('points_update', p_serial)
     return jsonify({'ok': True, 'player': p_serial, 'bet': bet})
 
+
 @app.route('/api/admin/next_question', methods=['POST'])
 def api_player_next_question():
     """
@@ -295,9 +296,13 @@ def api_player_next_question():
     - Round 2 -> shuffled per player
     - Round 3 -> code-based mapping
     """
-    data = request.json or {}
+    # ---------- Ensure JSON data ----------
+    if not request.is_json:
+        return jsonify({'error': 'Content-Type must be application/json'}), 415
+
+    data = request.get_json()
     playerId = data.get('playerId')
-    round_no = int(data.get('round', state['round']))
+    round_no = int(data.get('round', 1))
 
     if not playerId:
         return jsonify({'error': 'playerId required'}), 400
@@ -359,6 +364,7 @@ def api_player_next_question():
     db.player_rounds.update_one({'_id': pr['_id']}, {'$inc': {'currentIndex': 1}})
 
     return jsonify({'question': serialize_doc(q)})
+
 
 
 @app.route('/api/player/answer', methods=['POST'])
